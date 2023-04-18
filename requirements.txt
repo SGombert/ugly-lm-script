@@ -1,0 +1,6 @@
+torch
+git+https://github.com/huggingface/transformers
+accelerate
+pandas
+tqdm
+lxml

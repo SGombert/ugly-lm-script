@@ -9,9 +9,6 @@ from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
 
-checkpoint = 'Dogge/alpaca-13b'
-print('loading config')
-
 st = '''Your task is to score the "Student Answer". Only give a score ("Correct" / "Incorrect"). The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
 Here are some examples of scored "Student Answers":
 "Task": "Georgia found one brown mineral and one black mineral. How will she know which one is harder?"
@@ -36,7 +33,7 @@ Here are some examples of scored "Student Answers":
 "Student Answer": "{response}"
 "Score": '''
 
-def run_evaluation(checkpoint, gpt_j, batch_size):
+def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
     config = AutoConfig.from_pretrained(checkpoint)
     print('loading model')
     cp_file = checkpoint.replace('/', '_').replace('-', '_')
@@ -129,6 +126,6 @@ def run_evaluation(checkpoint, gpt_j, batch_size):
             
             dataset.to_excel(excel_file)
 
-run_evaluation('EleutherAI/gpt-j-6b', True, 12)
 run_evaluation('Dogge/alpaca-13b', False, 6)
+run_evaluation('EleutherAI/gpt-j-6b', True, 12)
 run_evaluation('circulus/alpaca-7b', False, 12)

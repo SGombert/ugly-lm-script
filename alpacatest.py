@@ -1,3 +1,4 @@
+
 import torch
 import os
 from tqdm import tqdm
@@ -9,7 +10,7 @@ from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
 
-st = '''Your task is to score the "Student Answer". Only give a score ("Correct" / "Incorrect"). The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+st = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
 Here are some examples of scored "Student Answers":
 "Task": "Georgia found one brown mineral and one black mineral. How will she know which one is harder?"
 "Reference Answer": "The harder mineral will leave a scratch on the less hard mineral. If the black mineral is harder, the brown mineral will have a scratch."
@@ -65,13 +66,16 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
         'prompt': [],
         'sample_solution': [],
         'response': [],
-        'feedback': [],
         'predicted_score': [],
-        'gt_score': []
+        'gt_score': [],
+        'model_output': [],
     }
 
-    for root, dirs, files in tqdm(os.walk('./test/2way/sciEntsBank')):
-        for file in files:
+    print('loading data')
+    for root, dirs, files in tqdm(os.walk('./test/2way/sciEntsBank'), position=0,
+            desc="walk", leave=False
+    ):
+        for file in tqdm(files, position=1, desc="files", leave=False):
 
             path = os.path.join(root, file)
             if not path.endswith('.xml'):
@@ -81,7 +85,10 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
             prompt = ''.join(xml_tree.xpath('/question/questionText')[0].itertext())
             sample_solutions = ', '.join(''.join(elem.itertext()) for elem in xml_tree.xpath('/question/referenceAnswers/referenceAnswer'))
 
-            for i, elem in enumerate(xml_tree.xpath('/question/studentAnswers/studentAnswer')):
+            for i, elem in tqdm(
+                    enumerate(xml_tree.xpath('/question/studentAnswers/studentAnswer')),
+                    position=2, desc="answers"
+            ):
                 response = ''.join(elem.itertext())
 
                 out_df['file'].append(file)
@@ -95,16 +102,17 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
                 out_df['sub-set'].append('test-unseen-answers' if 'test-unseen-answers' in path else ('test-unseen-questions' if 'test-unseen-questions' in path else ('test-unseen-domains')))
 
     dataset = pd.DataFrame.from_dict(out_df)
-    
+
     num_batches = len(dataset['file'].values) // batch_size + (1 if (len(dataset['file'].values) % batch_size != 0) else 0)
 
-    for b in range(num_batches):
+    print('starting inference')
+    for b in tqdm(range(num_batches)):
         min_idx = b * batch_size
         max_idx = b * batch_size + (batch_size if (b < num_batches - 1) else num_batches)
 
-        responses = out_df['response'].values[min_idx:max_idx]
-        prompts = out_df['prompt'].values[min_idx:max_idx]
-        sample_sols = out_df['sample_solution'].values[min_idx:max_idx]
+        responses = dataset['response'].values[min_idx:max_idx]
+        prompts = dataset['prompt'].values[min_idx:max_idx]
+        sample_sols = dataset['sample_solution'].values[min_idx:max_idx]
 
         prompts = [
             st.format(prompt=prompts[jj], sample_solution=sample_sols[jj], response=responses[jj])
@@ -113,7 +121,7 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
         ]
 
         with torch.no_grad():
-            inputs = tokenizer(prompts, return_tensors="pt").to(0)
+            inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(0)
 
             generate_ids = model.generate(inputs.input_ids)
 
@@ -123,9 +131,9 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
                 dataset['predicted_score'][b * batch_size + jj] = 'incorrect' if ('incorrect' in score.lower() or '0/1' in score) else 'correct'
             for jj, out in enumerate(outs):
                 dataset['model_output'][b * batch_size + jj] = out
-            
+
             dataset.to_excel(excel_file)
 
-run_evaluation('Dogge/alpaca-13b', False, 6)
-run_evaluation('EleutherAI/gpt-j-6b', True, 12)
-run_evaluation('circulus/alpaca-7b', False, 12)
+run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6)
+run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12)
+run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12)

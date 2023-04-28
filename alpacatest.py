@@ -10,7 +10,39 @@ from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
 
-st = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+st_no_task_no_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+
+"Reference Answer": "{sample_solution}"
+"Student Answer": "{response}"
+"Score": '''
+
+st_task_no_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+
+"Task": "{prompt}"
+"Reference Answer": "{sample_solution}"
+"Student Answer": "{response}"
+"Score": '''
+
+st_no_task_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+Here are some examples of scored "Student Answers":
+"Reference Answer": "The harder mineral will leave a scratch on the less hard mineral. If the black mineral is harder, the brown mineral will have a scratch."
+"Student Answer": "The one with scratches or deeper scratches is weaker and the other rock is harder."
+"Score": Correct
+"Reference Answer": "The harder coin will scratch the other."
+"Student Answer": "Rub them against a crystal."
+"Score": Incorrect
+"Reference Answer": "There is a complete circuit connecting the bulb to the D-cell battery."
+"Student Answer": "It will happen because electricity is flowing to the light bulb."
+"Score": Correct
+"Reference Answer": "C. Black absorbs more heat (energy) than white. Pan C has the most dark surface area so C would heat up the fastest and have the highest temperature."
+"Student Answer": "C. Because there are 3 heat sinks on C which will keep the pan warm in the night."
+"Score": Incorrect
+
+"Reference Answer": "{sample_solution}"
+"Student Answer": "{response}"
+"Score": '''
+
+st_task_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
 Here are some examples of scored "Student Answers":
 "Task": "Georgia found one brown mineral and one black mineral. How will she know which one is harder?"
 "Reference Answer": "The harder mineral will leave a scratch on the less hard mineral. If the black mineral is harder, the brown mineral will have a scratch."
@@ -34,7 +66,7 @@ Here are some examples of scored "Student Answers":
 "Student Answer": "{response}"
 "Score": '''
 
-def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
+def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_prefix='task_ex'):
     config = AutoConfig.from_pretrained(checkpoint)
     print('loading model')
     cp_file = checkpoint.replace('/', '_').replace('-', '_')
@@ -132,8 +164,24 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8):
             for jj, out in enumerate(outs):
                 dataset['model_output'][b * batch_size + jj] = out
 
-            dataset.to_excel(excel_file)
+            dataset.to_excel(excel_prefix + '_' + excel_file)
 
-run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6)
-run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12)
-run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12)
+print('No Task Prompt, No Examples')
+run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+
+print('Task Prompt, No Examples')
+run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
+run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
+run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_task_no_ex, excel_prefix='task_no_ex')
+
+print('No Task Prompt, Examples')
+run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
+run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
+run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_no_task_ex, excel_prefix='no_task_ex')
+
+print('Task Prompt, Examples')
+run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_task_ex, excel_prefix='task_ex')
+run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_task_ex, excel_prefix='task_ex')
+run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_task_ex, excel_prefix='task_ex')

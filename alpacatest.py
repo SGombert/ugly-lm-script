@@ -9,6 +9,7 @@ import os
 from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
+import pickle
 
 st_no_task_no_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
 
@@ -72,6 +73,7 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_p
     cp_file = checkpoint.replace('/', '_').replace('-', '_')
     cp_file = f'./{cp_file}.pt'
     excel_file = f'{cp_file}.xlsx'
+    tokenizer_file = f'./{cp_file}.tok.pkl'
 
     if not os.path.exists(cp_file):
         model = AutoModelForCausalLM.from_config(config)
@@ -89,7 +91,15 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_p
     )
 
     print('loading tokenizer')
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    if not os.path.isfile(tokenizer_file):
+        tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+        with open(tokenizer_file, "wb") as f:
+            pickle.dump(tokenizer, f)
+    else:
+        with open(tokenizer_file, "rb") as f:
+            tokenizer = pickle.load(f)
+    # tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     out_df = {
         'file': [],

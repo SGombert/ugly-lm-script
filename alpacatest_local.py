@@ -6,7 +6,6 @@ from lxml import etree
 import pandas as pd
 import os
 
-from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
 import pickle
@@ -67,37 +66,19 @@ Here are some examples of scored "Student Answers":
 "Student Answer": "{response}"
 "Score": '''
 
-def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_prefix='task_ex'):
+mps_device = torch.device("mps")
+
+def run_evaluation(checkpoint, batch_size=8, st=st_task_ex, excel_prefix='task_ex'):
     config = AutoConfig.from_pretrained(checkpoint)
     print('loading model')
     cp_file = checkpoint.replace('/', '_').replace('-', '_')
     cp_file = f'./{cp_file}.pt'
     excel_file = f'{cp_file}.xlsx'
     tokenizer_file = f'./{cp_file}.tok.pkl'
-
-    if not os.path.exists(cp_file):
-        model = AutoModelForCausalLM.from_config(config)
-        print('saving state dict for use with accelerate')
-        torch.save(model.state_dict(), cp_file)
-
-    print('load clean model for use with accelerate')
-    with init_empty_weights():
-        model = AutoModelForCausalLM.from_config(config)
-        model.tie_weights()
-
-    print('doing accelerate setup')
-    model = load_checkpoint_and_dispatch(
-        model, cp_file, device_map='auto', offload_folder='./offload', no_split_module_classes=["GPTJBlock" if gpt_j else "LlamaDecoderLayer"]
-    )
+    model = AutoModelForCausalLM.from_config(config).to(mps_device)
 
     print('loading tokenizer')
-    if not os.path.isfile(tokenizer_file):
-        tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-        with open(tokenizer_file, "wb") as f:
-            pickle.dump(tokenizer, f)
-    else:
-        with open(tokenizer_file, "rb") as f:
-            tokenizer = pickle.load(f)
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     # tokenizer.pad_token = tokenizer.eos_token
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
@@ -163,7 +144,7 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_p
         ]
 
         with torch.no_grad():
-            inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(0)
+            inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(mps_device)
 
             generate_ids = model.generate(**inputs, max_length=512)
 
@@ -177,21 +158,18 @@ def run_evaluation(checkpoint, gpt_j=False, batch_size=8, st=st_task_ex, excel_p
             dataset.to_excel(excel_prefix + '_' + excel_file)
 
 print('Task Prompt, Examples')
-run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_task_ex, excel_prefix='task_ex')
-run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_task_ex, excel_prefix='task_ex')
-run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_task_ex, excel_prefix='task_ex')
+run_evaluation('mistralai/Mistral-7B-Instruct-v0.2', batch_size=12, st=st_task_ex, excel_prefix='task_ex')
+run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_task_ex, excel_prefix='task_ex')
+run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_task_ex, excel_prefix='task_ex')
 
 print('No Task Prompt, No Examples')
-run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
-run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
-run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
 
 print('Task Prompt, No Examples')
-run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
-run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
-run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_task_no_ex, excel_prefix='task_no_ex')
+run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
+run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
 
 print('No Task Prompt, Examples')
-run_evaluation('EleutherAI/gpt-j-6b', gpt_j=True, batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
-run_evaluation('circulus/alpaca-7b', gpt_j=False, batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
-run_evaluation('Dogge/alpaca-13b', gpt_j=False, batch_size=6, st=st_no_task_ex, excel_prefix='no_task_ex')
+run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
+run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')

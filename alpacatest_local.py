@@ -69,13 +69,12 @@ Here are some examples of scored "Student Answers":
 mps_device = torch.device("mps")
 
 def run_evaluation(checkpoint, batch_size=8, st=st_task_ex, excel_prefix='task_ex'):
-    config = AutoConfig.from_pretrained(checkpoint)
     print('loading model')
     cp_file = checkpoint.replace('/', '_').replace('-', '_')
     cp_file = f'./{cp_file}.pt'
     excel_file = f'{cp_file}.xlsx'
     tokenizer_file = f'./{cp_file}.tok.pkl'
-    model = AutoModelForCausalLM.from_config(config).to(mps_device)
+    model = AutoModelForCausalLM.from_pretrained(checkpoint).to(mps_device)
 
     print('loading tokenizer')
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)

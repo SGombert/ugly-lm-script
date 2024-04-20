@@ -8,167 +8,163 @@ import os
 
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
-import pickle
+import random
 
-st_no_task_no_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+device = torch.device('cpu')
 
-"Reference Answer": "{sample_solution}"
-"Student Answer": "{response}"
-"Score": '''
+def load_data_xml_file_semeval(file):
+    id = file[file.rfind('/') + 1 : ]
+    xml_tree = etree.parse(file)
+    prompt = ''.join(xml_tree.xpath('/question/questionText')[0].itertext())
+    sample_solutions = '; '.join(''.join(elem.itertext()) for elem in xml_tree.xpath('/question/referenceAnswers/referenceAnswer'))
 
-st_task_no_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
+    elems = xml_tree.xpath('/question/studentAnswers/studentAnswer')
+    ddf = {
+        "id": [id for elem in elems],
+        "question": [prompt for elem in elems],
+        "reference_answer": [sample_solutions for elem in elems],
+        "student_answer": [''.join(elem.itertext()) for elem in elems],
+        "score": [elem.get('accuracy') for elem in elems]
+    }
+    return pd.DataFrame.from_dict(ddf)
 
-"Task": "{prompt}"
-"Reference Answer": "{sample_solution}"
-"Student Answer": "{response}"
-"Score": '''
+def load_complete_dataset_semeval(path):    
+    dfs = [
+        load_data_xml_file_semeval(os.path.join(root, file))
+        for root, dirs, files in os.walk(path)
+        for file in files
+        if file.endswith('.xml')
+    ]
 
-st_no_task_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
-Here are some examples of scored "Student Answers":
-"Reference Answer": "The harder mineral will leave a scratch on the less hard mineral. If the black mineral is harder, the brown mineral will have a scratch."
-"Student Answer": "The one with scratches or deeper scratches is weaker and the other rock is harder."
-"Score": Correct
-"Reference Answer": "The harder coin will scratch the other."
-"Student Answer": "Rub them against a crystal."
-"Score": Incorrect
-"Reference Answer": "There is a complete circuit connecting the bulb to the D-cell battery."
-"Student Answer": "It will happen because electricity is flowing to the light bulb."
-"Score": Correct
-"Reference Answer": "C. Black absorbs more heat (energy) than white. Pan C has the most dark surface area so C would heat up the fastest and have the highest temperature."
-"Student Answer": "C. Because there are 3 heat sinks on C which will keep the pan warm in the night."
-"Score": Incorrect
+    return pd.concat(dfs, axis=0, ignore_index=True)
 
-"Reference Answer": "{sample_solution}"
-"Student Answer": "{response}"
-"Score": '''
-
-st_task_ex = '''Your task is to score the "Student Answer". Give a score which is either "Correct" or "Incorrect", nothing more. The "Student Answer" is only correct if it entails the "Reference Answer", otherwise it is incorrect.
-Here are some examples of scored "Student Answers":
-"Task": "Georgia found one brown mineral and one black mineral. How will she know which one is harder?"
-"Reference Answer": "The harder mineral will leave a scratch on the less hard mineral. If the black mineral is harder, the brown mineral will have a scratch."
-"Student Answer": "The one with scratches or deeper scratches is weaker and the other rock is harder."
-"Score": Correct
-"Task": "Carrie wanted to find out which was harder, a penny or a nickel, so she did a scratch test. How would this tell her which is harder?"
-"Reference Answer": "The harder coin will scratch the other."
-"Student Answer": "Rub them against a crystal."
-"Score": Incorrect
-"Task": "Denise made a circuit to light a bulb or run a motor off a D-cell battery. She used a special switch. Below is the schematic diagram of her circuit. The switch is inside the dotted box. Why will the bulb light when she moves the switch to the left?"
-"Reference Answer": "There is a complete circuit connecting the bulb to the D-cell battery."
-"Student Answer": "It will happen because electricity is flowing to the light bulb."
-"Score": Correct
-"Task": "Maggie wanted to find out if surface area affected temperature change. She had 3 white cake pans. She filled each with 300 milliliters of water. She put one small black plastic disk in pan A, 2 in pan B, and 3 in pan C. Then she put all 3 pans in the sun. When Maggie measured the water temperature in each pan after 15 minutes, which pan do you think held the hottest water? Explain your answer."
-"Reference Answer": "C. Black absorbs more heat (energy) than white. Pan C has the most dark surface area so C would heat up the fastest and have the highest temperature."
-"Student Answer": "C. Because there are 3 heat sinks on C which will keep the pan warm in the night."
-"Score": Incorrect
-
-"Task": "{prompt}"
-"Reference Answer": "{sample_solution}"
-"Student Answer": "{response}"
-"Score": '''
-
-mps_device = torch.device("mps")
-
-def run_evaluation(checkpoint, batch_size=8, st=st_task_ex, excel_prefix='task_ex'):
-    print('loading model')
-    cp_file = checkpoint.replace('/', '_').replace('-', '_')
-    cp_file = f'./{cp_file}.pt'
-    excel_file = f'{cp_file}.xlsx'
-    tokenizer_file = f'./{cp_file}.tok.pkl'
-    model = AutoModelForCausalLM.from_pretrained(checkpoint).to(mps_device)
-
-    print('loading tokenizer')
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    # tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-
-    out_df = {
-        'file': [],
-        'id': [],
-        'sub-set': [],
-        'prompt': [],
-        'sample_solution': [],
-        'response': [],
-        'predicted_score': [],
-        'gt_score': [],
-        'model_output': [],
+def load_complete_dataset_saf(path):
+    dataset = pd.read_parquet(path, engine="auto")
+    
+    ddf = {
+        "id": dataset["id"].values,
+        "question": dataset["question"].values,
+        "reference_answer": dataset["reference_answer"].values,
+        "student_answer": dataset["provided_answer"].values,
+        "score": dataset["verification_feedback"].values 
     }
 
-    print('loading data')
-    for root, dirs, files in tqdm(os.walk('./test/2way/sciEntsBank'), position=0,
-            desc="walk", leave=False
-    ):
-        for file in tqdm(files, position=1, desc="files", leave=False):
+    return pd.DataFrame.from_dict(ddf)
 
-            path = os.path.join(root, file)
-            if not path.endswith('.xml'):
-                continue
+def create_prompt(base_prompt, train_data, n_shot, test_data, index, chat_mode):
+    question_format = '''Question: "{prompt}"\nReference Answer(s): "{sample_solution}"\nStudent Answer: "{response}"\nScore: {score}'''
 
-            xml_tree = etree.parse(path)
-            prompt = ''.join(xml_tree.xpath('/question/questionText')[0].itertext())
-            sample_solutions = ', '.join(''.join(elem.itertext()) for elem in xml_tree.xpath('/question/referenceAnswers/referenceAnswer'))
+    n_shot_examples = []
+    for n in range(n_shot):
+        idx = random.randint(0, len(train_data) - 1)
+        n_shot_examples.append(
+            question_format
+            .replace('{prompt}', train_data['question'].values[idx])
+            .replace('{sample_solution}', train_data['reference_answer'].values[idx])
+            .replace('{response}', train_data['student_answer'].values[idx])
+            .replace('{score}', train_data['score'].values[idx].capitalize())
+        )
+    n_shot_examples.append(
+        question_format
+        .replace('{prompt}', test_data['question'].values[index])
+        .replace('{sample_solution}', test_data['reference_answer'].values[index])
+        .replace('{response}', test_data['student_answer'].values[index])
+        .replace('{score}', "")
+    )
+    n_shot_str = '\n\n'.join(n_shot_examples)
+    return f'<s>[INST] {base_prompt}{n_shot_str} [/INST]' if chat_mode else f'{base_prompt}{n_shot_str}'
 
-            for i, elem in tqdm(
-                    enumerate(xml_tree.xpath('/question/studentAnswers/studentAnswer')),
-                    position=2, desc="answers"
-            ):
-                response = ''.join(elem.itertext())
+def create_prompt_set(base_prompt, train_data, n_shot, test_data, chat_mode):
+    return [
+        create_prompt(base_prompt, train_data, n_shot, test_data, i, chat_mode) for i in range(len(test_data))
+    ]
 
-                out_df['file'].append(file)
-                out_df['id'].append(elem.get('id'))
-                out_df['prompt'].append(prompt)
-                out_df['sample_solution'].append(sample_solutions)
-                out_df['response'].append(response)
-                out_df['gt_score'].append(elem.get('accuracy'))
-                out_df['predicted_score'].append('-')
-                out_df['model_output'].append('-')
-                out_df['sub-set'].append('test-unseen-answers' if 'test-unseen-answers' in path else ('test-unseen-questions' if 'test-unseen-questions' in path else ('test-unseen-domains')))
+def run_experiment(model, tokenizer, base_prompt, train_data, n_shot, test_data, chat_mode):
+    prompt_set = create_prompt_set(
+        base_prompt,
+        train_data,
+        n_shot,
+        test_data,
+        chat_mode
+    )
 
-    dataset = pd.DataFrame.from_dict(out_df)
-
-    num_batches = len(dataset['file'].values) // batch_size + (1 if (len(dataset['file'].values) % batch_size != 0) else 0)
-
-    print('starting inference')
-    for b in tqdm(range(num_batches)):
-        min_idx = b * batch_size
-        max_idx = b * batch_size + (batch_size if (b < num_batches - 1) else num_batches)
-
-        responses = dataset['response'].values[min_idx:max_idx]
-        prompts = dataset['prompt'].values[min_idx:max_idx]
-        sample_sols = dataset['sample_solution'].values[min_idx:max_idx]
-
-        prompts = [
-            st.format(prompt=prompts[jj], sample_solution=sample_sols[jj], response=responses[jj])
-            for jj
-            in range(len(responses))
+    with torch.no_grad():
+        outputs = [
+            tokenizer.batch_decode(
+                model.generate(
+                    **tokenizer(
+                        prompt_set[i],
+                        padding=True,
+                        truncation=True, 
+                        return_tensors="pt"
+                    ).to(device),
+                    max_new_tokens=1000,
+                    do_sample=True
+                ),
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True
+            )[0]
+            for i
+            in tqdm(range(len(test_data)))
         ]
 
-        with torch.no_grad():
-            inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(mps_device)
+    ddf = {
+        "n_shot": [str(n_shot) for i in range(len(test_data))],
+        "question": [test_data['question'].values[i] for i in range(len(test_data))],
+        "referense_answer": [test_data['reference_answer'].values[i] for i in range(len(test_data))],
+        "student_answer": [test_data['student_answer'].values[i] for i in range(len(test_data))],
+        "base_prompt": [base_prompt for i in range(len(test_data))],
+        "prompt": prompt_set,
+        "outputs": outputs,
+        "predicted_scores": [o[ : o.index('.')] for o in outputs],
+        "ground_truth_scores": [test_data['score'].values[i] for i in range(len(test_data))]
+    }
 
-            generate_ids = model.generate(**inputs, max_length=512)
+    return pd.DataFrame.from_dict(ddf)
 
-            outs = tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-            scores = [out.replace(st, '') for out in outs]
-            for jj, score in enumerate(scores):
-                dataset['predicted_score'][b * batch_size + jj] = 'incorrect' if ('incorrect' in score.lower() or '0/1' in score) else 'correct'
-            for jj, out in enumerate(outs):
-                dataset['model_output'][b * batch_size + jj] = out
+# SemEval
 
-            dataset.to_excel(excel_prefix + '_' + excel_file)
+prompt_scoring_2way = 'Your task is to score the "Student Answer" to the "Question". Give a score which is either "Correct" or "Incorrect", depending on if the "Student Answer" matches the "Reference Answer". Explain your reasoning step by step.\n\n'
+prompt_scoring_3way = 'Your task is to score the "Student Answer" to the "Question". Give a score which is either "Correct", "Incorrect" or "Contradictory", depending on if the "Student Answer" matches the "Reference Answer". Explain your reasoning step by step.\n\n'
 
-print('Task Prompt, Examples')
-run_evaluation('mistralai/Mistral-7B-Instruct-v0.2', batch_size=12, st=st_task_ex, excel_prefix='task_ex')
-run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_task_ex, excel_prefix='task_ex')
-run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_task_ex, excel_prefix='task_ex')
+prompt_scoring_teacher_2way = 'You are a teacher whose task is to score the "Student Answer" to the "Question". Give a score which is either "Correct" or "Incorrect", depending on if the "Student Answer" matches the "Reference Answer". Explain your reasoning step by step.\n\n'
+prompt_scoring_teacher_3way = 'Your are a teacher whose task is to score the "Student Answer" to the "Question". Give a score which is either "Correct", "Incorrect" or "Contradictory", depending on if the "Student Answer" matches the "Reference Answer". Explain your reasoning step by step.\n\n'
 
-print('No Task Prompt, No Examples')
-run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
-run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_no_task_no_ex, excel_prefix='no_task_no_ex')
+prompt_entailment_2way = 'Your task is to score the "Student Answer" to the "Question". Give a score which is either "Correct" or "Incorrect", depending on if a human reading of the "Reference Answer" would be justified in inferring the proposition expressed by the "Student Answer" from the proposition expressed by the "Reference Answer". Explain your reasoning step by step.\n\n'
+prompt_entailment_3way = 'Your task is to score the "Student Answer" to the "Question". Give a score which is either "Correct", "Incorrect" or "Contradictory", depending on if a human reading of the "Reference Answer" would be justified in inferring the proposition expressed by the "Student Answer" from the proposition expressed by the "Reference Answer". Explain your reasoning step by step.\n\n'
 
-print('Task Prompt, No Examples')
-run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
-run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_task_no_ex, excel_prefix='task_no_ex')
+prompt_entailment_teacher_2way = 'You are a teacher whose task is to score the "Student Answer" to the "Question". Give a score which is either "Correct" or "Incorrect", depending on if a human reading of the "Reference Answer" would be justified in inferring the proposition expressed by the "Student Answer" from the proposition expressed by the "Reference Answer". Explain your reasoning step by step.\n\n'
+prompt_entailment_teacher_3way = 'You are a teacher whose task is to score the "Student Answer" to the "Question". Give a score which is either "Correct", "Incorrect" or "Contradictory", depending on if a human reading of the "Reference Answer" would be justified in inferring the proposition expressed by the "Student Answer" from the proposition expressed by the "Reference Answer". Explain your reasoning step by step.\n\n'
 
-print('No Task Prompt, Examples')
-run_evaluation('EleutherAI/gpt-j-6b',  batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
-run_evaluation('circulus/alpaca-7b', batch_size=12, st=st_no_task_ex, excel_prefix='no_task_ex')
+print('load training sets')
+training_2way_beetle = load_complete_dataset_semeval('./SemEval/training/2way/beetle')
+training_3way_beetle = load_complete_dataset_semeval('./SemEval/training/3way/beetle')
+training_2way_scientsbank = load_complete_dataset_semeval('./SemEval/training/2way/sciEntsBank')
+training_3way_scientsbank = load_complete_dataset_semeval('./SemEval/training/3way/sciEntsBank')
+training_saf_english = pd.concat((load_complete_dataset_saf('./SAF-english/train.parquet'), load_complete_dataset_saf('./SAF-english/validation.parquet')), axis=0)
+training_saf_german_legal = pd.concat((load_complete_dataset_saf('./SAF-german-legal/train.parquet'), load_complete_dataset_saf('./SAF-german-legal/validation.parquet')), axis=0)
+training_saf_german_microjob = pd.concat((load_complete_dataset_saf('./SAF-german-microjob/train.parquet'), load_complete_dataset_saf('./SAF-german-microjob/validation.parquet')), axis=0)
+
+print('load test sets')
+test_2way_beetle_unseen_answers = load_complete_dataset_semeval('./SemEval/test/2way/beetle/test-unseen-answers')
+test_2way_beetle_unseen_questions = load_complete_dataset_semeval('./SemEval/test/2way/beetle/test-unseen-questions')
+test_3way_beetle_unseen_answers = load_complete_dataset_semeval('./SemEval/test/3way/beetle/test-unseen-answers')
+test_3way_beetle_unseen_questions = load_complete_dataset_semeval('./SemEval/test/3way/beetle/test-unseen-questions')
+test_2way_scientsbank_unseen_answers = load_complete_dataset_semeval('./SemEval/test/2way/sciEntsBank/test-unseen-answers')
+test_2way_scientsbank_unseen_questions = load_complete_dataset_semeval('./SemEval/test/2way/sciEntsBank/test-unseen-questions')
+test_2way_scientsbank_unseen_domains = load_complete_dataset_semeval('./SemEval/test/2way/sciEntsBank/test-unseen-domains')
+test_3way_scientsbank_unseen_answers = load_complete_dataset_semeval('./SemEval/test/3way/sciEntsBank/test-unseen-answers')
+test_3way_scientsbank_unseen_questions = load_complete_dataset_semeval('./SemEval/test/3way/sciEntsBank/test-unseen-questions')
+test_3way_scientsbank_unseen_domains = load_complete_dataset_semeval('./SemEval/test/3way/sciEntsBank/test-unseen-domains')
+test_saf_english_unseen_answers = load_complete_dataset_saf('./SAF-english/test_unseen_answers.parquet')
+test_saf_english_unseen_questions = load_complete_dataset_saf('./SAF-english/test_unseen_questions.parquet')
+test_saf_german_legal_unseen_answers = load_complete_dataset_saf('./SAF-german-legal/test_unseen_answers.parquet')
+test_saf_german_legal_unseen_questions = load_complete_dataset_saf('./SAF-german-legal/test_unseen_questions.parquet')
+test_saf_german_microjob_unseen_answers = load_complete_dataset_saf('./SAF-german-microjob/test_unseen_answers.parquet')
+test_saf_german_microjob_unseen_questions = load_complete_dataset_saf('./SAF-german-microjob/test_unseen_questions.parquet')
+
+# SAF English
+
+
+
+# SAF German
